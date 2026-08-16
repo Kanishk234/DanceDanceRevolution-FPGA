@@ -1,0 +1,137 @@
+# Dance Dance Revolution — project overview
+
+This document is the "how did we get here" story: the idea, the architecture we designed for it,
+how building it actually went, and how we tested it. If you just want to *play* the game, see
+`README.md` instead — this one is about the project, not the controls.
+
+## 1. The idea
+
+For ECE 316's Lab 4, everyone builds a "Tokyo-themed" scrolling sign on a Basys3 FPGA. There's a
+baseline version (pan a few strings across a 7-segment display) and an open-ended alternative,
+where you design your own project as long as it hits the same core requirements. We went
+open-ended.
+
+The pitch: what if the sign itself was the game? The Basys3's four 7-segment digits already look
+like a tiny arcade cabinet — seven independently-controllable bars per digit is basically a
+14-segment game board sitting there for free. So instead of just scrolling text, two of those
+digits became a live playfield: segments light up on their own, and you race to clear them with
+the matching button before the clock runs out. The other two digits track your score. It's a
+reflex game modeled on the arcade rhythm games you'd find in Akihabara or Shibuya, just played
+with your fingers on switches instead of your feet on a dance pad — hence the name.
+
+**The core loop, in one sentence:** segments spawn, you clear them by pressing the matching
+button or switch, your score goes up, and you're racing a 12-LED countdown the whole time.
+
+## 2. What it had to do
+
+Every Lab 4 project — baseline or open-ended — has to satisfy the same eight requirements. Ours
+maps onto them like this:
+
+| Requirement | How DDR satisfies it |
+|---|---|
+| Four operating modes, one an OFF state | OFF, START, GAMEPLAY, DONE (see below for why DONE became two sub-phases) |
+| Mode advance via a single edge-triggered button | `BTNC`'s rising edge advances the mode every time |
+| One-hot LED encoding, OFF = `0001` | `0001` / `0010` / `0100` / `1000`, exactly one LED per mode |
+| Pause/resume that exactly resumes | one switch (`P`) freezes every counter and register simultaneously; nothing is lost |
+| Visible, real-time animation in 3+ modes | text scrolls in START/DONE; segments spawn and the timer bar drains in GAMEPLAY |
+| Static, recognizable OFF | OFF just reads "OFF", unmoving |
+| Tokyo theme | arcade/rhythm-game framing throughout |
+| At least one button, one switch, one slow clock | 5 buttons + 5 switches + 4 independent slow clocks |
+
+## 3. Architecture, top to bottom
+
+The design follows a discipline the course calls out explicitly: split the system into a
+**controller** (which only tracks *what mode you're in*) and a **datapath** (which owns every
+piece of actual data — the board, the score, the timer, the text). The controller never touches
+game state directly; it just flips switches that tell the datapath what to do this cycle.
+
+![System architecture](data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iOTAwIiBoZWlnaHQ9IjU0MCIgdmlld0JveD0iMCAwIDkwMCA1NDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgZm9udC1mYW1pbHk9IkhlbHZldGljYSwgQXJpYWwsIHNhbnMtc2VyaWYiPgogIDx0aXRsZT5ERFIgc3lzdGVtIGFyY2hpdGVjdHVyZTwvdGl0bGU+CiAgPHJlY3QgeD0iMCIgeT0iMCIgd2lkdGg9IjkwMCIgaGVpZ2h0PSI1NDAiIGZpbGw9IiNmZmZmZmYiLz4KCiAgPHRleHQgeD0iNDUwIiB5PSIzNiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIyMCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IiMxYTFhMWEiPlN5c3RlbSBhcmNoaXRlY3R1cmU8L3RleHQ+CiAgPHRleHQgeD0iNDUwIiB5PSI1OCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxMyIgZmlsbD0iIzVmNWU1YSI+dGhlIGNvbnRyb2xsZXIgc2NoZWR1bGVzOyB0aGUgZGF0YXBhdGggZG9lcyBldmVyeSBiaXQgb2YgYWN0dWFsIHdvcms8L3RleHQ+CgogIDwhLS0gb3V0ZXIgZGRyX3RvcCBjb250YWluZXIgLS0+CiAgPHJlY3QgeD0iNDAiIHk9IjgyIiB3aWR0aD0iODIwIiBoZWlnaHQ9IjQwMCIgcng9IjE2IiBmaWxsPSIjRjhGN0Y0IiBzdHJva2U9IiNCNEIyQTkiIHN0cm9rZS13aWR0aD0iMSIvPgogIDx0ZXh0IHg9IjYwIiB5PSIxMDYiIGZvbnQtc2l6ZT0iMTMiIGZpbGw9IiM1ZjVlNWEiIGZvbnQtd2VpZ2h0PSJib2xkIj5kZHJfdG9wPC90ZXh0PgoKICA8IS0tIGNvbnRyb2xsZXIgLS0+CiAgPHJlY3QgeD0iNzAiIHk9IjEyMiIgd2lkdGg9IjE4MCIgaGVpZ2h0PSIzMjAiIHJ4PSIxMiIgZmlsbD0iI0NFQ0JGNiIgc3Ryb2tlPSIjNTM0QUI3IiBzdHJva2Utd2lkdGg9IjEiLz4KICA8dGV4dCB4PSIxNjAiIHk9IjE1NiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxNyIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IiMyNjIxNUMiPmNvbnRyb2xsZXI8L3RleHQ+CiAgPHRleHQgeD0iMTYwIiB5PSIxODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTIiIGZpbGw9IiMzQzM0ODkiPm1vZGUgRlNNPC90ZXh0PgogIDx0ZXh0IHg9IjE2MCIgeT0iMjAwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjExIiBmaWxsPSIjM0MzNDg5Ij41IHN0YXRlcywgemVybyBkYXRhPC90ZXh0PgogIDx0ZXh0IHg9IjE2MCIgeT0iMjE4IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjExIiBmaWxsPSIjM0MzNDg5Ij5ubyBzdWJtb2R1bGVzPC90ZXh0PgogIDx0ZXh0IHg9IjE2MCIgeT0iNDEwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjExIiBmaWxsPSIjM0MzNDg5IiBmb250LXN0eWxlPSJpdGFsaWMiPiJ3aGF0IG1vZGUgYXJlIHdlIGluPyI8L3RleHQ+CgogIDwhLS0gY29ubmVjdGluZyBhcnJvd3MgLS0+CiAgPGRlZnM+PG1hcmtlciBpZD0iYXJyb3ciIHZpZXdCb3g9IjAgMCAxMCAxMCIgcmVmWD0iOCIgcmVmWT0iNSIgbWFya2VyV2lkdGg9IjYiIG1hcmtlckhlaWdodD0iNiIgb3JpZW50PSJhdXRvLXN0YXJ0LXJldmVyc2UiPjxwYXRoIGQ9Ik0yIDFMOCA1TDIgOSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNWY1ZTVhIiBzdHJva2Utd2lkdGg9IjEuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9tYXJrZXI+PC9kZWZzPgogIDxsaW5lIHgxPSIyNTAiIHkxPSIyMDAiIHgyPSIyOTAiIHkyPSIyMDAiIHN0cm9rZT0iIzVmNWU1YSIgc3Ryb2tlLXdpZHRoPSIxLjQiIG1hcmtlci1lbmQ9InVybCgjYXJyb3cpIi8+CiAgPGxpbmUgeDE9IjI5MCIgeTE9IjM2MCIgeDI9IjI1MCIgeTI9IjM2MCIgc3Ryb2tlPSIjNWY1ZTVhIiBzdHJva2Utd2lkdGg9IjEuNCIgbWFya2VyLWVuZD0idXJsKCNhcnJvdykiLz4KCiAgPCEtLSBkYXRhcGF0aCAtLT4KICA8cmVjdCB4PSIyOTAiIHk9IjEyMiIgd2lkdGg9IjU1MCIgaGVpZ2h0PSIzMjAiIHJ4PSIxMiIgZmlsbD0iI0U4RjdGMSIgc3Ryb2tlPSIjMEY2RTU2IiBzdHJva2Utd2lkdGg9IjEiLz4KICA8dGV4dCB4PSIzMTAiIHk9IjE1MCIgZm9udC1zaXplPSIxNyIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IiMwNDM0MkMiPmRhdGFwYXRoPC90ZXh0PgogIDx0ZXh0IHg9IjMxMCIgeT0iMTcwIiBmb250LXNpemU9IjEyIiBmaWxsPSIjMDg1MDQxIj5zaXggYmxvY2tzICsgc2hhcmVkIGNsb2NrL2VkZ2UtZGV0ZWN0IHBsdW1iaW5nPC90ZXh0PgoKICA8IS0tIDYgYmxvY2tzIC0tPgogIDxnPgogICAgPHJlY3QgeD0iMzEwIiB5PSIxOTUiIHdpZHRoPSIxNjAiIGhlaWdodD0iNjIiIHJ4PSI4IiBmaWxsPSIjZmZmZmZmIiBzdHJva2U9IiM2QjZCNkIiIHN0cm9rZS13aWR0aD0iMSIvPgogICAgPHRleHQgeD0iMzkwIiB5PSIyMTYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTMiIGZvbnQtd2VpZ2h0PSJib2xkIiBmaWxsPSIjMWExYTFhIj5pbnB1dF9tYXBwZXI8L3RleHQ+CiAgICA8dGV4dCB4PSIzOTAiIHk9IjIzNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxMC41IiBmaWxsPSIjNWY1ZTVhIj5idXR0b25zICYjODU5NDsgc2VnX2hpdDwvdGV4dD4KICA8L2c+CiAgPGc+CiAgICA8cmVjdCB4PSI0ODUiIHk9IjE5NSIgd2lkdGg9IjE2MCIgaGVpZ2h0PSI2MiIgcng9IjgiIGZpbGw9IiNmZmZmZmYiIHN0cm9rZT0iIzZCNkI2QiIgc3Ryb2tlLXdpZHRoPSIxIi8+CiAgICA8dGV4dCB4PSI1NjUiIHk9IjIxNiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxMyIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IiMxYTFhMWEiPnRhcmdldF9nZW5lcmF0b3I8L3RleHQ+CiAgICA8dGV4dCB4PSI1NjUiIHk9IjIzNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxMC41IiBmaWxsPSIjNWY1ZTVhIj5vd25zIHRoZSBnYW1lIGJvYXJkPC90ZXh0PgogIDwvZz4KICA8Zz4KICAgIDxyZWN0IHg9IjY2MCIgeT0iMTk1IiB3aWR0aD0iMTYwIiBoZWlnaHQ9IjYyIiByeD0iOCIgZmlsbD0iI2ZmZmZmZiIgc3Ryb2tlPSIjNkI2QjZCIiBzdHJva2Utd2lkdGg9IjEiLz4KICAgIDx0ZXh0IHg9Ijc0MCIgeT0iMjE2IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjEzIiBmb250LXdlaWdodD0iYm9sZCIgZmlsbD0iIzFhMWExYSI+aGl0X21pc3NfbWF0aDwvdGV4dD4KICAgIDx0ZXh0IHg9Ijc0MCIgeT0iMjM0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjEwLjUiIGZpbGw9IiM1ZjVlNWEiPmNoZWNrcyBoaXRzLCBrZWVwcyBzY29yZTwvdGV4dD4KICA8L2c+CiAgPGc+CiAgICA8cmVjdCB4PSIzMTAiIHk9IjI3MiIgd2lkdGg9IjE2MCIgaGVpZ2h0PSI2MiIgcng9IjgiIGZpbGw9IiNmZmZmZmYiIHN0cm9rZT0iIzZCNkI2QiIgc3Ryb2tlLXdpZHRoPSIxIi8+CiAgICA8dGV4dCB4PSIzOTAiIHk9IjI5MyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxMyIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IiMxYTFhMWEiPmdhbWVfdGltZXI8L3RleHQ+CiAgICA8dGV4dCB4PSIzOTAiIHk9IjMxMSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxMC41IiBmaWxsPSIjNWY1ZTVhIj5jb3VudHMgdGhlIHJvdW5kIGRvd248L3RleHQ+CiAgPC9nPgogIDxnPgogICAgPHJlY3QgeD0iNDg1IiB5PSIyNzIiIHdpZHRoPSIxNjAiIGhlaWdodD0iNjIiIHJ4PSI4IiBmaWxsPSIjZmZmZmZmIiBzdHJva2U9IiM2QjZCNkIiIHN0cm9rZS13aWR0aD0iMSIvPgogICAgPHRleHQgeD0iNTY1IiB5PSIyOTMiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTMiIGZvbnQtd2VpZ2h0PSJib2xkIiBmaWxsPSIjMWExYTFhIj5zY3JvbGxpbmdfdGV4dDwvdGV4dD4KICAgIDx0ZXh0IHg9IjU2NSIgeT0iMzExIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjEwLjUiIGZpbGw9IiM1ZjVlNWEiPnBhbnMgT0ZGL1NUQVJUL2VuZCB0ZXh0PC90ZXh0PgogIDwvZz4KICA8Zz4KICAgIDxyZWN0IHg9IjY2MCIgeT0iMjcyIiB3aWR0aD0iMTYwIiBoZWlnaHQ9IjYyIiByeD0iOCIgZmlsbD0iI2ZmZmZmZiIgc3Ryb2tlPSIjNkI2QjZCIiBzdHJva2Utd2lkdGg9IjEiLz4KICAgIDx0ZXh0IHg9Ijc0MCIgeT0iMjkzIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjEzIiBmb250LXdlaWdodD0iYm9sZCIgZmlsbD0iIzFhMWExYSI+Z3JhcGhpY3Nfcm91dGVyPC90ZXh0PgogICAgPHRleHQgeD0iNzQwIiB5PSIzMTEiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTAuNSIgZmlsbD0iIzVmNWU1YSI+cGlja3Mgd2hhdCdzIG9uIHNjcmVlbjwvdGV4dD4KICA8L2c+CgogIDxyZWN0IHg9IjMxMCIgeT0iMzU0IiB3aWR0aD0iNTEwIiBoZWlnaHQ9IjM0IiByeD0iOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjQjRCMkE5IiBzdHJva2Utd2lkdGg9IjEiIHN0cm9rZS1kYXNoYXJyYXk9IjMgMyIvPgogIDx0ZXh0IHg9IjU2NSIgeT0iMzc1IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjExLjUiIGZpbGw9IiM1ZjVlNWEiPnBsdXMgNCBjbG9jayBkaXZpZGVycyBhbmQgMiBlZGdlIGRldGVjdG9ycywgc2hhcmVkIGFjcm9zcyB0aGUgYmxvY2tzIGFib3ZlPC90ZXh0PgogIDx0ZXh0IHg9IjU2NSIgeT0iNDEwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjExLjUiIGZpbGw9IiMwODUwNDEiIGZvbnQtc3R5bGU9Iml0YWxpYyI+IndoYXQncyB0aGUgY3VycmVudCBnYW1lIHN0YXRlLCBhbmQgd2hhdCBzaG93cyBvbiB0aGUgZGlzcGxheT8iPC90ZXh0PgoKICA8dGV4dCB4PSI0NTAiIHk9IjUxMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxMiIgZmlsbD0iIzVmNWU1YSI+OCBjb250cm9sIHNpZ25hbHMgZmxvdyBjb250cm9sbGVyICYjODU5NDsgZGF0YXBhdGggJiMxNjA7JiM4MjI2OyYjMTYwOyAyIHN0YXR1cyBzaWduYWxzIChjX2VkZ2UsIHJvdW5kX292ZXIpIGZsb3cgYmFjazwvdGV4dD4KPC9zdmc+Cg==)
+
+**The controller** is a five-state FSM (more on the fifth state in a second) that emits eight
+plain on/off control signals and reads back exactly two status bits — "did the button just get
+pressed" and "did the round just end." That's the entire vocabulary it needs to run the whole
+game; it has no idea what a "segment" or a "score" even is.
+
+**The datapath** is where the game actually lives, organized into six blocks, each with one job:
+
+- **`input_mapper`** — collects the five buttons and two switches into one bundle everything else reads.
+- **`target_generator`** — owns the 14-segment game board: decides where new segments randomly appear, and clears them when you hit the right one.
+- **`hit_miss_math`** — checks your presses against the board and keeps the running score.
+- **`game_timer`** — counts the round down and drives the 12-LED bar.
+- **`scrolling_text`** — everything about the panned text screens (OFF / START / the end screen).
+- **`graphics_router`** — the last stop before the physical display: decides, digit by digit, whether you're looking at the game board, the score, or scrolling text.
+
+None of these know about "modes" — they just do their one job continuously and let the
+controller's signals decide when that job matters.
+
+## 4. The state machine
+
+Five states, cycling forever:
+
+![Game flow](data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTA0MCIgaGVpZ2h0PSI0MDAiIHZpZXdCb3g9IjAgMCAxMDQwIDQwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiBmb250LWZhbWlseT0iSGVsdmV0aWNhLCBBcmlhbCwgc2Fucy1zZXJpZiI+CiAgPHRpdGxlPkREUiBnYW1lIGZsb3csIGZpdmUgcGhhc2VzPC90aXRsZT4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTA0MCIgaGVpZ2h0PSI0MDAiIGZpbGw9IiNmZmZmZmYiLz4KICA8ZGVmcz4KICAgIDxtYXJrZXIgaWQ9ImFycm93IiB2aWV3Qm94PSIwIDAgMTAgMTAiIHJlZlg9IjgiIHJlZlk9IjUiIG1hcmtlcldpZHRoPSI2IiBtYXJrZXJIZWlnaHQ9IjYiIG9yaWVudD0iYXV0by1zdGFydC1yZXZlcnNlIj4KICAgICAgPHBhdGggZD0iTTIgMUw4IDVMMiA5IiBmaWxsPSJub25lIiBzdHJva2U9IiM1ZjVlNWEiIHN0cm9rZS13aWR0aD0iMS42IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICAgIDwvbWFya2VyPgogIDwvZGVmcz4KCiAgPHRleHQgeD0iNTIwIiB5PSIzNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIyMCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IiMxYTFhMWEiPkdhbWUgZmxvdzwvdGV4dD4KICA8dGV4dCB4PSI1MjAiIHk9IjU2IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjEzIiBmaWxsPSIjNWY1ZTVhIj5FdmVyeSBhcnJvdyBiZWxvdyBpcyBhIEJUTkMgcHJlc3MsIGV4Y2VwdCBvbmUgYXV0b21hdGljIHN0ZXA8L3RleHQ+CgogIDwhLS0gT0ZGIC0tPgogIDxnPgogICAgPHJlY3QgeD0iNDAiIHk9IjEwMCIgd2lkdGg9IjE2MCIgaGVpZ2h0PSI5MCIgcng9IjEwIiBmaWxsPSIjRjFFRkU4IiBzdHJva2U9IiM1RjVFNUEiIHN0cm9rZS13aWR0aD0iMSIvPgogICAgPHRleHQgeD0iMTIwIiB5PSIxMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTUiIGZvbnQtd2VpZ2h0PSJib2xkIiBmaWxsPSIjMmMyYzJhIj5PRkY8L3RleHQ+CiAgICA8dGV4dCB4PSIxMjAiIHk9IjE1MiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxMiIgZmlsbD0iIzVmNWU1YSI+TEVEIDAwMDE8L3RleHQ+CiAgICA8dGV4dCB4PSIxMjAiIHk9IjE3MCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxMiIgZmlsbD0iIzVmNWU1YSI+c3RhdGljICJPRkYiPC90ZXh0PgogIDwvZz4KCiAgPCEtLSBTVEFSVCAtLT4KICA8Zz4KICAgIDxyZWN0IHg9IjIzNSIgeT0iMTAwIiB3aWR0aD0iMTYwIiBoZWlnaHQ9IjkwIiByeD0iMTAiIGZpbGw9IiNDRUNCRjYiIHN0cm9rZT0iIzUzNEFCNyIgc3Ryb2tlLXdpZHRoPSIxIi8+CiAgICA8dGV4dCB4PSIzMTUiIHk9IjEzMiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxNSIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IiMyNjIxNUMiPlNUQVJUPC90ZXh0PgogICAgPHRleHQgeD0iMzE1IiB5PSIxNTIiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTIiIGZpbGw9IiMzQzM0ODkiPkxFRCAwMDEwPC90ZXh0PgogICAgPHRleHQgeD0iMzE1IiB5PSIxNzAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTIiIGZpbGw9IiMzQzM0ODkiPnBhbnMgIlNUQVJUIjwvdGV4dD4KICA8L2c+CgogIDwhLS0gR0FNRVBMQVkgLS0+CiAgPGc+CiAgICA8cmVjdCB4PSI0MzAiIHk9IjEwMCIgd2lkdGg9IjE2MCIgaGVpZ2h0PSI5MCIgcng9IjEwIiBmaWxsPSIjOUZFMUNCIiBzdHJva2U9IiMwRjZFNTYiIHN0cm9rZS13aWR0aD0iMSIvPgogICAgPHRleHQgeD0iNTEwIiB5PSIxMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTUiIGZvbnQtd2VpZ2h0PSJib2xkIiBmaWxsPSIjMDQzNDJDIj5HQU1FUExBWTwvdGV4dD4KICAgIDx0ZXh0IHg9IjUxMCIgeT0iMTUyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjEyIiBmaWxsPSIjMDg1MDQxIj5MRUQgMDEwMDwvdGV4dD4KICAgIDx0ZXh0IHg9IjUxMCIgeT0iMTcwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjEyIiBmaWxsPSIjMDg1MDQxIj5jbGVhciBzZWdtZW50cyE8L3RleHQ+CiAgPC9nPgoKICA8IS0tIERPTkVfU0NPUkUgLS0+CiAgPGc+CiAgICA8cmVjdCB4PSI2MjUiIHk9IjEwMCIgd2lkdGg9IjE2MCIgaGVpZ2h0PSI5MCIgcng9IjEwIiBmaWxsPSIjRjVDNEIzIiBzdHJva2U9IiM5OTNDMUQiIHN0cm9rZS13aWR0aD0iMSIvPgogICAgPHRleHQgeD0iNzA1IiB5PSIxMjYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTQiIGZvbnQtd2VpZ2h0PSJib2xkIiBmaWxsPSIjNEExQjBDIj5ET05FPC90ZXh0PgogICAgPHRleHQgeD0iNzA1IiB5PSIxNDQiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTIiIGZpbGw9IiM0QTFCMEMiPihzY29yZSBob2xkKTwvdGV4dD4KICAgIDx0ZXh0IHg9IjcwNSIgeT0iMTYyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjEyIiBmaWxsPSIjNzEyQjEzIj5MRUQgMTAwMDwvdGV4dD4KICAgIDx0ZXh0IHg9IjcwNSIgeT0iMTc4IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjEyIiBmaWxsPSIjNzEyQjEzIj5zaG93cyBmaW5hbCBzY29yZTwvdGV4dD4KICA8L2c+CgogIDwhLS0gRE9ORV9URVhUIC0tPgogIDxnPgogICAgPHJlY3QgeD0iODIwIiB5PSIxMDAiIHdpZHRoPSIxNjAiIGhlaWdodD0iOTAiIHJ4PSIxMCIgZmlsbD0iI0Y1QzRCMyIgc3Ryb2tlPSIjOTkzQzFEIiBzdHJva2Utd2lkdGg9IjEiLz4KICAgIDx0ZXh0IHg9IjkwMCIgeT0iMTI2IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjE0IiBmb250LXdlaWdodD0iYm9sZCIgZmlsbD0iIzRBMUIwQyI+RE9ORTwvdGV4dD4KICAgIDx0ZXh0IHg9IjkwMCIgeT0iMTQ0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjEyIiBmaWxsPSIjNEExQjBDIj4oZGRyIGVuZCk8L3RleHQ+CiAgICA8dGV4dCB4PSI5MDAiIHk9IjE2MiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxMiIgZmlsbD0iIzcxMkIxMyI+TEVEIDEwMDA8L3RleHQ+CiAgICA8dGV4dCB4PSI5MDAiIHk9IjE3OCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxMiIgZmlsbD0iIzcxMkIxMyI+cGFucyAiZGRyIGVuZCI8L3RleHQ+CiAgPC9nPgoKICA8IS0tIGZvcndhcmQgYXJyb3dzIC0tPgogIDxsaW5lIHgxPSIyMDAiIHkxPSIxNDUiIHgyPSIyMzAiIHkyPSIxNDUiIHN0cm9rZT0iIzVmNWU1YSIgc3Ryb2tlLXdpZHRoPSIxLjYiIG1hcmtlci1lbmQ9InVybCgjYXJyb3cpIi8+CiAgPHRleHQgeD0iMjE1IiB5PSIxMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTEiIGZpbGw9IiM1ZjVlNWEiPkJUTkM8L3RleHQ+CgogIDxsaW5lIHgxPSIzOTUiIHkxPSIxNDUiIHgyPSI0MjUiIHkyPSIxNDUiIHN0cm9rZT0iIzVmNWU1YSIgc3Ryb2tlLXdpZHRoPSIxLjYiIG1hcmtlci1lbmQ9InVybCgjYXJyb3cpIi8+CiAgPHRleHQgeD0iNDEwIiB5PSIxMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTEiIGZpbGw9IiM1ZjVlNWEiPkJUTkM8L3RleHQ+CgogIDxsaW5lIHgxPSI1OTAiIHkxPSIxNDUiIHgyPSI2MjAiIHkyPSIxNDUiIHN0cm9rZT0iIzVmNWU1YSIgc3Ryb2tlLXdpZHRoPSIxLjYiIG1hcmtlci1lbmQ9InVybCgjYXJyb3cpIi8+CiAgPHRleHQgeD0iNjA1IiB5PSIxMTAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTAuNSIgZmlsbD0iIzVmNWU1YSI+dGltZXIgLyBzY29yZSAvIGJvYXJkPC90ZXh0PgogIDx0ZXh0IHg9IjYwNSIgeT0iMTIyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjEwLjUiIGZpbGw9IiM1ZjVlNWEiPihhdXRvbWF0aWMpPC90ZXh0PgoKICA8bGluZSB4MT0iNzg1IiB5MT0iMTQ1IiB4Mj0iODE1IiB5Mj0iMTQ1IiBzdHJva2U9IiM1ZjVlNWEiIHN0cm9rZS13aWR0aD0iMS42IiBtYXJrZXItZW5kPSJ1cmwoI2Fycm93KSIvPgogIDx0ZXh0IHg9IjgwMCIgeT0iMTMyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjExIiBmaWxsPSIjNWY1ZTVhIj5CVE5DPC90ZXh0PgoKICA8IS0tIGxvb3AgYmFjayBET05FX1RFWFQgLT4gT0ZGIC0tPgogIDxwYXRoIGQ9Ik05MDAgMTkwIEMgOTAwIDMwMCwgMTIwIDMwMCwgMTIwIDE5MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNWY1ZTVhIiBzdHJva2Utd2lkdGg9IjEuNiIgbWFya2VyLWVuZD0idXJsKCNhcnJvdykiLz4KICA8dGV4dCB4PSI1MTAiIHk9IjMxNiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxMiIgZmlsbD0iIzVmNWU1YSI+QlROQyAoYmFjayB0byBPRkYsIGxvb3AgcmVzdGFydHMpPC90ZXh0PgoKICA8IS0tIHJlc2V0IG5vdGUgLS0+CiAgPHJlY3QgeD0iNDAiIHk9IjM0NSIgd2lkdGg9Ijk0MCIgaGVpZ2h0PSI0MCIgcng9IjgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2I0YjJhOSIgc3Ryb2tlLXdpZHRoPSIxIiBzdHJva2UtZGFzaGFycmF5PSI0IDQiLz4KICA8dGV4dCB4PSI1MTAiIHk9IjM3MCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxMyIgZmlsbD0iIzJjMmMyYSI+UiAoU1cwKSBqdW1wcyBzdHJhaWdodCBiYWNrIHRvIE9GRiBmcm9tIGFueSBvZiB0aGVzZSBmaXZlIHBoYXNlcywgaW5zdGFudGx5PC90ZXh0Pgo8L3N2Zz4K)
+
+The interesting design decision here was **splitting DONE into two sub-phases**. The naive version
+— match the style of every other transition — would have the round end and immediately start
+panning an end-screen message, the same way every other mode swaps straight to its next display.
+We didn't want that. When a round ends, the game should hold on your final score first: the board
+goes dark, the score sits there untouched until you actually look at it and press the button, and
+*then* the end screen appears. That's a fundamentally different feel from "game just moves on
+without you."
+
+The catch: the rubric requires exactly four one-hot LED patterns. So `DONE_SCORE` and `DONE_TEXT`
+both light up the same LED (`1000`) — the split is invisible on the LEDs, and the datapath tells
+the two sub-phases apart internally using a signal it already had lying around, rather than
+inventing a new one just for this. A full lap through the game is five button presses, not four.
+
+## 5. How it actually got built
+
+The path from paper design to working Verilog wasn't perfectly straight. A few things worth
+knowing about how this came together:
+
+**Consolidation over sprawl.** The first implementation pass split every register and comparator
+into its own file — great for isolated unit testing, but it ballooned to nearly twice as many
+files as planned and got harder to read, not easier. It got folded back down to the six blocks
+above, each keeping its internal pieces clearly sectioned off so the logic still reads the same
+way, just without needing to jump between files to follow one thought.
+
+**Simulate first, always.** Every module got run through Icarus Verilog before it ever touched
+Vivado. That workflow caught real bugs cheaply — including a couple of classic testbench mistakes
+(changing a signal in the same instant as the clock edge that was supposed to react to it, which
+races the simulator) that would've been much more annoying to debug on actual hardware.
+
+**Real bugs only showed up once we started testing like it was real hardware.** Three worth
+calling out, because none of them were visible in the paper design:
+
+- Holding the reset switch didn't just force the mode back to OFF — it blanked the *entire*
+  display, because the reset was wired into the same signal that keeps the display-scanning
+  hardware running at all. Fixed by making sure the scanning logic never stops, regardless of mode.
+- The static "OFF" text briefly rendered as "OOFF" — a wraparound-math edge case that only
+  triggered for a string that was never actually supposed to move in the first place.
+- The OFF screen would occasionally start from a leftover scroll position instead of the same
+  spot every time, because one specific mode transition forgot to reset the scroll position back
+  to zero.
+
+All three are the kind of bug that a paper design simply can't catch — they only show up once
+you're actually running the thing.
+
+**The panning behavior changed after watching it run.** The original plan had text bounce back
+and forth at each end, like a marquee reversing direction. In practice, that read as the display
+glitching rather than intentionally scrolling. It was replaced with a continuous one-directional
+loop instead — the text scrolls one way and wraps cleanly back to the start, which reads much more
+like an actual arcade sign.
+
+## 6. Testing
+
+Two layers of testbenches, both simulation-first:
+
+- **Unit tests** cover the controller (every state transition, every one-cycle control pulse, the
+  reset behavior) and the text-scrolling engine (every letter's segment pattern, and the exact
+  scroll sequence across a full loop).
+- **An integration test** drives the whole chip through a full game — reset, mode advance,
+  pause/resume, a forced round to completion, both DONE sub-phases, and a regression check for
+  each of the three hardware bugs above, so none of them can silently come back.
+
+Every testbench got generated with AI assistance first, then reviewed and corrected by hand —
+in a few cases that review caught real mistakes in the AI's first draft (the clock-edge race
+mentioned above being the main repeat offender). Nothing shipped on a testbench's word alone
+without someone actually reading what it was checking.
